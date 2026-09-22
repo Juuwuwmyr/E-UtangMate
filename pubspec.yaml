@@ -1,0 +1,72 @@
+name: utang_mate
+description: "UtangMate - Debt & Customer Credit Management for Small Store Owners"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State Management
+  provider: ^6.1.2
+
+  # Database
+  sqflite: ^2.3.3+1
+  path: ^1.9.0
+
+  # UI
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.2.1
+  fl_chart: ^0.69.0
+  flutter_slidable: ^3.1.1
+  cached_network_image: ^3.4.1
+
+  # PDF & Sharing
+  pdf: ^3.11.1
+  printing: ^5.13.2
+  share_plus: ^10.0.2
+
+  # CSV Export
+  csv: ^6.0.0
+
+  # Date & Time
+  intl: ^0.19.0
+
+  # File System
+  path_provider: ^2.1.4
+
+  # Permissions
+  permission_handler: ^11.3.1
+
+  # Image Picker (profile photos)
+  image_picker: ^1.1.2
+  image_cropper: ^8.0.2
+
+  # Shared Preferences (settings, PIN)
+  shared_preferences: ^2.3.3
+
+  # UUID
+  uuid: ^4.5.1
+
+  # URL Launcher (WhatsApp, SMS, etc.)
+  url_launcher: ^6.3.1
+
+  # Local Notifications
+  flutter_local_notifications: ^18.0.1
+
+  # Timezone
+  timezone: ^0.9.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/icons/
