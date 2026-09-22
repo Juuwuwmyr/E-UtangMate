@@ -3,9 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/transaction_provider.dart';
-import '../../providers/customer_provider.dart';
 import '../../providers/store_provider.dart';
 import '../../core/theme.dart';
+import '../../data/database/database_helper.dart';
 import '../../data/models/transaction_model.dart';
 import '../../data/models/customer_model.dart';
 import '../../utils/formatters.dart';
@@ -24,12 +24,14 @@ class AddDebtScreen extends StatefulWidget {
 
 class _AddDebtScreenState extends State<AddDebtScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _db = DatabaseHelper();
 
   // Customer selection
   Customer? _selectedCustomer;
   final _customerSearchCtrl = TextEditingController();
   List<Customer> _customerResults = [];
   bool _showDropdown = false;
+  bool _isSearching = false;
 
   // Transaction fields
   DateTime _transactionDate = DateTime.now();
@@ -54,18 +56,16 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
   }
 
   Future<void> _loadPreSelectedCustomer() async {
-    await context
-        .read<CustomerProvider>()
-        .loadCustomer(widget.customerId!);
-    if (mounted) {
+    // Lightweight: just fetch this one customer directly from DB
+    final customer = await _db.getCustomerById(widget.customerId!);
+    if (mounted && customer != null) {
       setState(() {
-        _selectedCustomer =
-            context.read<CustomerProvider>().selectedCustomer;
-        if (_selectedCustomer != null) {
-          _customerSearchCtrl.text = _selectedCustomer!.name;
-        }
+        _selectedCustomer = customer;
+        _customerSearchCtrl.text = customer.name;
         _items.add(_ItemEntry());
       });
+    } else if (mounted) {
+      _items.add(_ItemEntry());
     }
   }
 
@@ -74,18 +74,19 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
       setState(() {
         _customerResults = [];
         _showDropdown = false;
+        _isSearching = false;
       });
       return;
     }
-    final provider = context.read<CustomerProvider>();
-    provider.setSearch(query);
-    await Future.delayed(const Duration(milliseconds: 100));
-    if (mounted) {
-      setState(() {
-        _customerResults = provider.customers.take(6).toList();
-        _showDropdown = _customerResults.isNotEmpty;
-      });
-    }
+    setState(() => _isSearching = true);
+    // Query directly — no shared provider mutation, no UI rebuilds outside this screen
+    final results = await _db.getCustomers(query: query.trim());
+    if (!mounted) return;
+    setState(() {
+      _customerResults = results.take(6).toList();
+      _showDropdown = _customerResults.isNotEmpty;
+      _isSearching = false;
+    });
   }
 
   void _selectCustomer(Customer c) {
@@ -130,23 +131,32 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
   }
 
   Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
-    final txProvider = context.read<TransactionProvider>();
+    // Validate customer first before running form validation
     if (_selectedCustomer == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a customer')),
-      );
-      return;
-    }
-    if (_items.isEmpty || _items.every((i) => !i.isValid)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Add at least one item')),
+        const SnackBar(
+          content: Text('Please select a customer first'),
+          backgroundColor: AppTheme.overdue,
+        ),
       );
       return;
     }
 
+    if (_items.isEmpty || _items.every((i) => !i.isValid)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Add at least one item with name, qty, and price'),
+          backgroundColor: AppTheme.overdue,
+        ),
+      );
+      return;
+    }
+
+    // Only run form validation after pre-checks pass
+    if (!_formKey.currentState!.validate()) return;
+
+    final txProvider = context.read<TransactionProvider>();
     final validItems = _items.where((i) => i.isValid).toList();
-    if (validItems.isEmpty) return;
 
     // Check credit limit
     final customer = _selectedCustomer!;
@@ -158,7 +168,10 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
           context,
           title: 'Credit Limit Exceeded',
           message:
-              '${customer.name} has a credit limit of ${AppFormatter.currency(customer.creditLimit!)}. This transaction would bring their balance to ${AppFormatter.currency(newBalance)}, exceeding the limit by ${AppFormatter.currency(newBalance - customer.creditLimit!)}. Continue anyway?',
+              '${customer.name}\'s limit: ${AppFormatter.currency(customer.creditLimit!)}\n'
+              'New balance: ${AppFormatter.currency(newBalance)}\n'
+              'Over by: ${AppFormatter.currency(newBalance - customer.creditLimit!)}\n\n'
+              'Continue anyway?',
           confirmLabel: 'Continue',
           isDangerous: true,
           icon: Icons.warning_amber_outlined,
@@ -189,7 +202,8 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
               itemName: i.nameCtrl.text.trim(),
               quantity: double.parse(i.qtyCtrl.text),
               unit: i.unit,
-              pricePerUnit: double.parse(i.priceCtrl.text.replaceAll(',', '')),
+              pricePerUnit:
+                  double.parse(i.priceCtrl.text.replaceAll(',', '')),
               totalPrice: i.totalPrice,
             ))
         .toList();
@@ -203,7 +217,7 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-              'Debt recorded: ${AppFormatter.currency(_total)} for ${customer.name}'),
+              'Saved! ${AppFormatter.currency(_total)} for ${customer.name}'),
           backgroundColor: AppTheme.paid,
         ),
       );
@@ -211,8 +225,7 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-              txProvider.error ?? 'Failed to save'),
+          content: Text(txProvider.error ?? 'Failed to save. Try again.'),
           backgroundColor: AppTheme.overdue,
         ),
       );
@@ -264,24 +277,56 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
             // Customer picker
             _SectionLabel('Customer'),
             const SizedBox(height: 8),
-            if (widget.customerId != null && _selectedCustomer != null)
-              _SelectedCustomerBanner(customer: _selectedCustomer!)
+            if (widget.customerId != null)
+              // Pre-selected mode — show banner or loading
+              _selectedCustomer != null
+                  ? _SelectedCustomerBanner(customer: _selectedCustomer!)
+                  : Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primary.withValues(alpha: 0.06),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                            color: AppTheme.primary.withValues(alpha: 0.2)),
+                      ),
+                      child: const Row(
+                        children: [
+                          SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2)),
+                          SizedBox(width: 12),
+                          Text('Loading customer...'),
+                        ],
+                      ),
+                    )
             else ...[
+              // Free search mode
               TextFormField(
                 controller: _customerSearchCtrl,
                 onChanged: _searchCustomers,
                 decoration: InputDecoration(
-                  hintText: 'Search customer by name or phone...',
+                  hintText: 'Search customer by name...',
                   prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _selectedCustomer != null
-                      ? const Icon(Icons.check_circle,
-                          color: AppTheme.paid)
-                      : null,
+                  suffixIcon: _isSearching
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2)),
+                        )
+                      : _selectedCustomer != null
+                          ? const Icon(Icons.check_circle,
+                              color: AppTheme.paid)
+                          : null,
                 ),
-                validator: (_) => _selectedCustomer == null
-                    ? 'Please select a customer'
-                    : null,
               ),
+              if (_selectedCustomer != null) ...[
+                const SizedBox(height: 6),
+                _SelectedCustomerBanner(customer: _selectedCustomer!),
+              ],
               if (_showDropdown)
                 Card(
                   margin: const EdgeInsets.only(top: 4),
@@ -299,9 +344,10 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
                                         fontWeight: FontWeight.w700,
                                         fontSize: 13)),
                               ),
-                              title: Text(c.name),
-                              subtitle:
-                                  Text(c.phone ?? c.customerId),
+                              title: Text(c.name,
+                                  overflow: TextOverflow.ellipsis),
+                              subtitle: Text(c.customerId,
+                                  overflow: TextOverflow.ellipsis),
                               trailing: c.outstandingBalance > 0
                                   ? Text(
                                       AppFormatter.currency(
@@ -309,8 +355,9 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
                                           symbol: sym),
                                       style: const TextStyle(
                                           color: AppTheme.overdue,
-                                          fontSize: 12,
+                                          fontSize: 11,
                                           fontWeight: FontWeight.w600),
+                                      overflow: TextOverflow.ellipsis,
                                     )
                                   : null,
                               onTap: () => _selectCustomer(c),
@@ -413,13 +460,18 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
                   const Text('Total Amount',
                       style: TextStyle(
                           fontSize: 15, fontWeight: FontWeight.w600)),
-                  Text(
-                    AppFormatter.currency(_total, symbol: sym),
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      color: AppTheme.primary,
-                      fontFeatures: [FontFeature.tabularFigures()],
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      AppFormatter.currency(_total, symbol: sym),
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.primary,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
                     ),
                   ),
                 ],
@@ -455,7 +507,11 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
                             strokeWidth: 2, color: Colors.white))
                     : const Icon(Icons.save_outlined),
                 label: Text(
-                    'Record Debt  •  ${AppFormatter.currency(_total, symbol: sym)}'),
+                  _total > 0
+                      ? 'Record  ${AppFormatter.currency(_total, symbol: sym)}'
+                      : 'Record Debt',
+                  overflow: TextOverflow.ellipsis,
+                ),
                 style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16)),
               ),
@@ -502,20 +558,23 @@ class _SelectedCustomerBanner extends StatelessWidget {
             ),
           ),
           if (customer.outstandingBalance > 0)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  AppFormatter.currency(customer.outstandingBalance),
-                  style: const TextStyle(
-                      color: AppTheme.overdue,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13),
-                ),
-                const Text('outstanding',
-                    style:
-                        TextStyle(fontSize: 10, color: AppTheme.textHint)),
-              ],
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    AppFormatter.currency(customer.outstandingBalance),
+                    style: const TextStyle(
+                        color: AppTheme.overdue,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const Text('outstanding',
+                      style: TextStyle(
+                          fontSize: 10, color: AppTheme.textHint)),
+                ],
+              ),
             ),
         ],
       ),
@@ -713,7 +772,7 @@ class _ItemRowState extends State<_ItemRow> {
               children: [
                 // Qty
                 SizedBox(
-                  width: 72,
+                  width: 60,
                   child: TextFormField(
                     controller: entry.qtyCtrl,
                     keyboardType: const TextInputType.numberWithOptions(
@@ -728,27 +787,31 @@ class _ItemRowState extends State<_ItemRow> {
                       hintText: 'Qty',
                       isDense: true,
                       contentPadding: EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 12),
+                          horizontal: 6, vertical: 12),
                     ),
                     validator: AppValidators.quantity,
                   ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
 
                 // Unit
                 SizedBox(
-                  width: 80,
+                  width: 72,
                   child: DropdownButtonFormField<String>(
                     initialValue: entry.unit,
                     isDense: true,
+                    isExpanded: true,
                     decoration: const InputDecoration(
                       isDense: true,
                       contentPadding: EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 12),
+                          horizontal: 6, vertical: 12),
                     ),
                     items: _units
                         .map((u) => DropdownMenuItem(
-                            value: u, child: Text(u, style: const TextStyle(fontSize: 13))))
+                            value: u,
+                            child: Text(u,
+                                style: const TextStyle(fontSize: 12),
+                                overflow: TextOverflow.ellipsis)))
                         .toList(),
                     onChanged: (v) {
                       if (v != null) {
@@ -758,7 +821,7 @@ class _ItemRowState extends State<_ItemRow> {
                     },
                   ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
 
                 // Price
                 Expanded(
@@ -776,7 +839,7 @@ class _ItemRowState extends State<_ItemRow> {
                       prefixText: '${widget.symbol} ',
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 12),
+                          horizontal: 6, vertical: 12),
                     ),
                     validator: (v) => AppValidators.amount(v),
                   ),
@@ -796,6 +859,8 @@ class _ItemRowState extends State<_ItemRow> {
                     color: AppTheme.primary,
                     fontSize: 13,
                   ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
               ),
             ],

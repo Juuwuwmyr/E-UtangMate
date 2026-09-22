@@ -207,15 +207,6 @@ class DatabaseHelper {
     return 'CUST-${next.toString().padLeft(4, '0')}';
   }
 
-  Future<String> _nextTransactionId(Database db) async {
-    final next = await _incrementSequence(db, 'transaction');
-    return 'TX-${next.toString().padLeft(5, '0')}';
-  }
-
-  Future<String> _nextPaymentId(Database db) async {
-    final next = await _incrementSequence(db, 'payment');
-    return 'PAY-${next.toString().padLeft(5, '0')}';
-  }
 
   Future<int> _incrementSequence(Database db, String name) async {
     await db.rawUpdate(
@@ -399,7 +390,19 @@ class DatabaseHelper {
     final db = await database;
     return await db.transaction((txn) async {
       final now = DateTime.now();
-      final txId = await _nextTransactionId(db);
+      // Get next ID using the transaction connection to avoid deadlock
+      await txn.rawUpdate(
+        'UPDATE $tableSequences SET current_value = current_value + 1 WHERE name = ?',
+        ['transaction'],
+      );
+      final seqResult = await txn.query(
+        tableSequences,
+        where: 'name = ?',
+        whereArgs: ['transaction'],
+      );
+      final seqVal = seqResult.first['current_value'] as int;
+      final txId = 'TX-${seqVal.toString().padLeft(5, '0')}';
+
       final toInsert = transaction.copyWith(
         transactionId: txId,
         createdAt: now,
@@ -418,14 +421,17 @@ class DatabaseHelper {
         );
       }
 
-      await _insertAuditLog(db, AuditLog(
-        action: AuditAction.transactionCreated,
-        entityType: 'transaction',
-        entityId: txId,
-        description:
+      // Insert audit log using the same txn to avoid deadlock
+      await txn.insert(tableAuditLogs, {
+        'action': AuditAction.transactionCreated.name,
+        'entity_type': 'transaction',
+        'entity_id': txId,
+        'description':
             'Transaction created: $txId for ${transaction.customerName} - ₱${transaction.totalAmount.toStringAsFixed(2)}',
-        createdAt: now,
-      ));
+        'old_value': null,
+        'new_value': null,
+        'created_at': now.toIso8601String(),
+      });
 
       return toInsert.copyWith(id: id, items: items);
     });
@@ -545,7 +551,20 @@ class DatabaseHelper {
       }
 
       final now = DateTime.now();
-      final payId = await _nextPaymentId(db);
+
+      // Generate payment ID using txn to avoid deadlock
+      await txn.rawUpdate(
+        'UPDATE $tableSequences SET current_value = current_value + 1 WHERE name = ?',
+        ['payment'],
+      );
+      final seqResult = await txn.query(
+        tableSequences,
+        where: 'name = ?',
+        whereArgs: ['payment'],
+      );
+      final seqVal = seqResult.first['current_value'] as int;
+      final payId = 'PAY-${seqVal.toString().padLeft(5, '0')}';
+
       final toInsert = payment.copyWith(paymentId: payId, createdAt: now);
       final id = await txn.insert(tablePayments, toInsert.toMap());
 
@@ -577,14 +596,17 @@ class DatabaseHelper {
         whereArgs: [payment.transactionId],
       );
 
-      await _insertAuditLog(db, AuditLog(
-        action: AuditAction.paymentCreated,
-        entityType: 'payment',
-        entityId: payId,
-        description:
+      // Audit log using txn — same connection, no deadlock
+      await txn.insert(tableAuditLogs, {
+        'action': AuditAction.paymentCreated.name,
+        'entity_type': 'payment',
+        'entity_id': payId,
+        'description':
             'Payment of ₱${payment.amount.toStringAsFixed(2)} recorded for ${payment.customerName}',
-        createdAt: now,
-      ));
+        'old_value': null,
+        'new_value': null,
+        'created_at': now.toIso8601String(),
+      });
 
       return toInsert.copyWith(id: id);
     });

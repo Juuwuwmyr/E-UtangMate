@@ -75,8 +75,8 @@ class TransactionProvider extends ChangeNotifier {
     notifyListeners();
     try {
       final created = await _db.insertTransaction(transaction, items);
-      // Refresh the customer's transactions
-      await loadTransactionsByCustomer(transaction.customerId);
+      // Do NOT reload the list here — the screen pops immediately and
+      // the caller (CustomerDetailScreen) reloads on its own via .then((_) => _load())
       return created;
     } catch (e) {
       _error = e.toString();
