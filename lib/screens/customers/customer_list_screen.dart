@@ -344,17 +344,21 @@ class _FilterChips extends StatelessWidget {
             label: Text(label),
             selected: selected,
             onSelected: (_) => onChanged(filter),
-            selectedColor: Colors.white.withValues(alpha: 0.25),
+            selectedColor: Colors.white.withValues(alpha: 0.3),
             checkmarkColor: Colors.white,
             labelStyle: TextStyle(
-              color: Colors.white.withValues(alpha: selected ? 1 : 0.75),
+              color: selected
+                  ? Colors.white
+                  : Colors.white.withValues(alpha: 0.85),
               fontSize: 12,
-              fontWeight:
-                  selected ? FontWeight.w600 : FontWeight.w400,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
             ),
-            backgroundColor: Colors.transparent,
+            backgroundColor: Colors.white.withValues(alpha: 0.08),
             side: BorderSide(
-                color: Colors.white.withValues(alpha: selected ? 0.6 : 0.3)),
+                color: selected
+                    ? Colors.white.withValues(alpha: 0.8)
+                    : Colors.white.withValues(alpha: 0.4),
+                width: selected ? 1.5 : 1.0),
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20)),
             padding:

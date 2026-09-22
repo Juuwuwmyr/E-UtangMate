@@ -39,8 +39,13 @@ class DatabaseHelper {
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
+        // Enable foreign keys. WAL mode is set inside onCreate/onOpen
+        // to avoid the "PRAGMA journal_mode=WAL" error on some Android versions.
         await db.execute('PRAGMA foreign_keys = ON');
-        await db.execute('PRAGMA journal_mode = WAL');
+      },
+      onOpen: (db) async {
+        // Set WAL mode after the database is opened (safe on all Android versions)
+        await db.rawQuery('PRAGMA journal_mode=WAL');
       },
     );
   }

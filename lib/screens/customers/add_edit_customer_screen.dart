@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -23,18 +22,12 @@ class AddEditCustomerScreen extends StatefulWidget {
 class _AddEditCustomerScreenState extends State<AddEditCustomerScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameFocus = FocusNode();
-  final _phoneFocus = FocusNode();
   final _addressFocus = FocusNode();
-  final _emailFocus = FocusNode();
   final _notesFocus = FocusNode();
-  final _limitFocus = FocusNode();
 
   late final TextEditingController _nameCtrl;
-  late final TextEditingController _phoneCtrl;
   late final TextEditingController _addressCtrl;
-  late final TextEditingController _emailCtrl;
   late final TextEditingController _notesCtrl;
-  late final TextEditingController _limitCtrl;
 
   String? _photoPath;
   bool _isSaving = false;
@@ -46,29 +39,19 @@ class _AddEditCustomerScreenState extends State<AddEditCustomerScreen> {
     super.initState();
     final c = widget.customer;
     _nameCtrl = TextEditingController(text: c?.name ?? '');
-    _phoneCtrl = TextEditingController(text: c?.phone ?? '');
     _addressCtrl = TextEditingController(text: c?.address ?? '');
-    _emailCtrl = TextEditingController(text: c?.email ?? '');
     _notesCtrl = TextEditingController(text: c?.notes ?? '');
-    _limitCtrl = TextEditingController(
-        text: c?.creditLimit?.toStringAsFixed(2) ?? '');
     _photoPath = c?.photoPath;
   }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
-    _phoneCtrl.dispose();
     _addressCtrl.dispose();
-    _emailCtrl.dispose();
     _notesCtrl.dispose();
-    _limitCtrl.dispose();
     _nameFocus.dispose();
-    _phoneFocus.dispose();
     _addressFocus.dispose();
-    _emailFocus.dispose();
     _notesFocus.dispose();
-    _limitFocus.dispose();
     super.dispose();
   }
 
@@ -136,15 +119,14 @@ class _AddEditCustomerScreenState extends State<AddEditCustomerScreen> {
       id: widget.customer?.id,
       customerId: widget.customer?.customerId ?? '',
       name: _nameCtrl.text.trim(),
-      phone: _phoneCtrl.text.trim().isEmpty ? null : _phoneCtrl.text.trim(),
+      // Preserve existing phone/email/creditLimit if editing
+      phone: widget.customer?.phone,
+      email: widget.customer?.email,
+      creditLimit: widget.customer?.creditLimit,
       address:
           _addressCtrl.text.trim().isEmpty ? null : _addressCtrl.text.trim(),
-      email: _emailCtrl.text.trim().isEmpty ? null : _emailCtrl.text.trim(),
       photoPath: _photoPath,
       notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
-      creditLimit: _limitCtrl.text.trim().isEmpty
-          ? null
-          : double.tryParse(_limitCtrl.text.replaceAll(',', '')),
       createdAt: widget.customer?.createdAt ?? now,
       updatedAt: now,
     );
@@ -181,9 +163,7 @@ class _AddEditCustomerScreenState extends State<AddEditCustomerScreen> {
   }
 
   Future<bool> _onWillPop() async {
-    if (_nameCtrl.text.isNotEmpty ||
-        _phoneCtrl.text.isNotEmpty ||
-        _addressCtrl.text.isNotEmpty) {
+    if (_nameCtrl.text.isNotEmpty || _addressCtrl.text.isNotEmpty) {
       final confirm = await ConfirmDialog.show(
         context,
         title: 'Discard Changes?',
@@ -273,10 +253,7 @@ class _AddEditCustomerScreenState extends State<AddEditCustomerScreen> {
                 ),
                 const SizedBox(height: 28),
 
-                _SectionLabel('Basic Information'),
-                const SizedBox(height: 12),
-
-                // Name
+                // Name (required)
                 TextFormField(
                   controller: _nameCtrl,
                   focusNode: _nameFocus,
@@ -284,7 +261,7 @@ class _AddEditCustomerScreenState extends State<AddEditCustomerScreen> {
                   textCapitalization: TextCapitalization.words,
                   onChanged: (_) => setState(() {}),
                   onFieldSubmitted: (_) =>
-                      FocusScope.of(context).requestFocus(_phoneFocus),
+                      FocusScope.of(context).requestFocus(_addressFocus),
                   decoration: const InputDecoration(
                     labelText: 'Full Name *',
                     prefixIcon: Icon(Icons.person_outline),
@@ -295,28 +272,7 @@ class _AddEditCustomerScreenState extends State<AddEditCustomerScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // Phone
-                TextFormField(
-                  controller: _phoneCtrl,
-                  focusNode: _phoneFocus,
-                  textInputAction: TextInputAction.next,
-                  keyboardType: TextInputType.phone,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(
-                        RegExp(r'[\d\+\-\(\)\s]'))
-                  ],
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).requestFocus(_addressFocus),
-                  decoration: const InputDecoration(
-                    labelText: 'Phone Number',
-                    prefixIcon: Icon(Icons.phone_outlined),
-                    hintText: '09XX XXX XXXX',
-                  ),
-                  validator: AppValidators.phone,
-                ),
-                const SizedBox(height: 16),
-
-                // Address
+                // Address (optional)
                 TextFormField(
                   controller: _addressCtrl,
                   focusNode: _addressFocus,
@@ -324,9 +280,9 @@ class _AddEditCustomerScreenState extends State<AddEditCustomerScreen> {
                   textCapitalization: TextCapitalization.sentences,
                   maxLines: 2,
                   onFieldSubmitted: (_) =>
-                      FocusScope.of(context).requestFocus(_emailFocus),
+                      FocusScope.of(context).requestFocus(_notesFocus),
                   decoration: const InputDecoration(
-                    labelText: 'Address',
+                    labelText: 'Address (optional)',
                     prefixIcon: Icon(Icons.home_outlined),
                     hintText: 'Street, Barangay, City',
                     alignLabelWithHint: true,
@@ -334,52 +290,7 @@ class _AddEditCustomerScreenState extends State<AddEditCustomerScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // Email
-                TextFormField(
-                  controller: _emailCtrl,
-                  focusNode: _emailFocus,
-                  textInputAction: TextInputAction.next,
-                  keyboardType: TextInputType.emailAddress,
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).requestFocus(_limitFocus),
-                  decoration: const InputDecoration(
-                    labelText: 'Email',
-                    prefixIcon: Icon(Icons.email_outlined),
-                    hintText: 'optional',
-                  ),
-                  validator: AppValidators.email,
-                ),
-                const SizedBox(height: 24),
-
-                _SectionLabel('Credit Settings'),
-                const SizedBox(height: 12),
-
-                // Credit limit
-                TextFormField(
-                  controller: _limitCtrl,
-                  focusNode: _limitFocus,
-                  textInputAction: TextInputAction.next,
-                  keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(
-                        RegExp(r'[\d\.,]'))
-                  ],
-                  onFieldSubmitted: (_) =>
-                      FocusScope.of(context).requestFocus(_notesFocus),
-                  decoration: const InputDecoration(
-                    labelText: 'Credit Limit',
-                    prefixIcon: Icon(Icons.credit_card_outlined),
-                    prefixText: '₱ ',
-                    hintText: 'Leave blank for no limit',
-                  ),
-                ),
-                const SizedBox(height: 24),
-
-                _SectionLabel('Notes'),
-                const SizedBox(height: 12),
-
-                // Notes
+                // Notes (optional)
                 TextFormField(
                   controller: _notesCtrl,
                   focusNode: _notesFocus,
@@ -387,7 +298,7 @@ class _AddEditCustomerScreenState extends State<AddEditCustomerScreen> {
                   textCapitalization: TextCapitalization.sentences,
                   maxLines: 3,
                   decoration: const InputDecoration(
-                    labelText: 'Notes',
+                    labelText: 'Notes (optional)',
                     prefixIcon: Icon(Icons.notes_outlined),
                     hintText: 'Any additional info about this customer',
                     alignLabelWithHint: true,
@@ -410,6 +321,9 @@ class _AddEditCustomerScreenState extends State<AddEditCustomerScreen> {
                                 color: Colors.white))
                         : const Icon(Icons.save_outlined),
                     label: Text(_isEditing ? 'Update Customer' : 'Add Customer'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 32),
@@ -417,24 +331,6 @@ class _AddEditCustomerScreenState extends State<AddEditCustomerScreen> {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _SectionLabel extends StatelessWidget {
-  final String text;
-  const _SectionLabel(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text.toUpperCase(),
-      style: const TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.w700,
-        color: AppTheme.textSecondary,
-        letterSpacing: 0.8,
       ),
     );
   }
