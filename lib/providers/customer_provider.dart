@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import '../data/database/database_helper.dart';
 import '../data/models/customer_model.dart';
@@ -16,6 +18,7 @@ class CustomerProvider extends ChangeNotifier {
   String? _error;
 
   String _searchQuery = '';
+  Timer? _searchDebounce;
   CustomerFilter _filter = CustomerFilter.all;
   CustomerSort _sort = CustomerSort.name;
   bool _sortDesc = false;
@@ -127,7 +130,8 @@ class CustomerProvider extends ChangeNotifier {
 
   void setSearch(String query) {
     _searchQuery = query;
-    loadCustomers();
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 300), loadCustomers);
   }
 
   void setFilter(CustomerFilter filter) {
@@ -153,6 +157,12 @@ class CustomerProvider extends ChangeNotifier {
   void clearError() {
     _error = null;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    super.dispose();
   }
 
   String? _filterToString(CustomerFilter filter) {

@@ -16,6 +16,7 @@ import '../../widgets/status_badge.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/loading_overlay.dart';
+import '../payments/pay_down_screen.dart';
 
 class CustomerDetailScreen extends StatefulWidget {
   final int customerId;
@@ -85,6 +86,20 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen>
                   'customerName': customer.name,
                 })
                 .then((_) => _load()),
+            onPayDown: () {
+              final unpaid = txProvider.transactions
+                  .where((t) =>
+                      t.status != TransactionStatus.paid &&
+                      t.remainingBalance > 0)
+                  .toList()
+                ..sort((a, b) => a.transactionDate.compareTo(b.transactionDate));
+              Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => PayDownScreen(
+                  customer: customer,
+                  unpaidTransactions: unpaid,
+                ),
+              )).then((_) => _load());
+            },
           ),
           SliverPersistentHeader(
             pinned: true,
@@ -136,12 +151,14 @@ class _CustomerSliverAppBar extends StatelessWidget {
   final String sym;
   final VoidCallback onEdit;
   final VoidCallback onAddDebt;
+  final VoidCallback onPayDown;
 
   const _CustomerSliverAppBar({
     required this.customer,
     required this.sym,
     required this.onEdit,
     required this.onAddDebt,
+    required this.onPayDown,
   });
 
   @override
@@ -273,20 +290,40 @@ class _CustomerSliverAppBar extends StatelessWidget {
                           ],
                         ),
                       ),
-                      ElevatedButton.icon(
-                        onPressed: onAddDebt,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor:
-                              Colors.white.withValues(alpha: 0.2),
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          side: BorderSide(
-                              color:
-                                  Colors.white.withValues(alpha: 0.4)),
+                      // Pay Down button (shows when 2+ unpaid debts)
+                      if (customer.unpaidTransactions >= 2)
+                        OutlinedButton.icon(
+                          onPressed: onPayDown,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            side: BorderSide(
+                                color:
+                                    Colors.white.withValues(alpha: 0.6)),
+                            backgroundColor:
+                                Colors.white.withValues(alpha: 0.15),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 8),
+                          ),
+                          icon: const Icon(Icons.payments_outlined,
+                              size: 16),
+                          label: const Text('Pay Down',
+                              style: TextStyle(fontSize: 12)),
+                        )
+                      else
+                        ElevatedButton.icon(
+                          onPressed: onAddDebt,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor:
+                                Colors.white.withValues(alpha: 0.2),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            side: BorderSide(
+                                color:
+                                    Colors.white.withValues(alpha: 0.4)),
+                          ),
+                          icon: const Icon(Icons.add, size: 18),
+                          label: const Text('Add Debt'),
                         ),
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('Add Debt'),
-                      ),
                     ],
                   ),
                 ],

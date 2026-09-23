@@ -16,6 +16,7 @@ import 'screens/customers/add_edit_customer_screen.dart';
 import 'screens/customers/customer_detail_screen.dart';
 import 'screens/transactions/add_debt_screen.dart';
 import 'screens/payments/record_payment_screen.dart';
+
 import 'screens/reports/reports_screen.dart';
 import 'screens/settings/settings_screen.dart';
 import 'screens/reminders/reminders_screen.dart';
@@ -163,24 +164,36 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
+  final List<Widget?> _pages = List<Widget?>.filled(4, null);
 
-  final _pages = const [
-    DashboardScreen(),
-    CustomerListScreen(),
-    RemindersScreen(),
-    ReportsScreen(),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _pages[0] = const DashboardScreen();
+  }
+
+  void _selectPage(int index) {
+    _pages[index] ??= switch (index) {
+      1 => const CustomerListScreen(),
+      2 => const RemindersScreen(),
+      3 => const ReportsScreen(),
+      _ => const DashboardScreen(),
+    };
+    setState(() => _currentIndex = index);
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: IndexedStack(
         index: _currentIndex,
-        children: _pages,
+        children: [
+          for (final page in _pages) page ?? const SizedBox.shrink(),
+        ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
-        onDestinationSelected: (i) => setState(() => _currentIndex = i),
+        onDestinationSelected: _selectPage,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         destinations: const [
           NavigationDestination(

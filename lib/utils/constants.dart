@@ -13,7 +13,7 @@ class AppRoutes {
   static const String reports = '/reports';
   static const String settings = '/settings';
   static const String reminders = '/reminders';
-  static const String auditLog = '/audit-log';
+  static const String payDown = '/pay-down';
 }
 
 class AppColors {

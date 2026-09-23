@@ -1,3 +1,4 @@
+
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/customer_model.dart';
@@ -609,6 +610,121 @@ class DatabaseHelper {
       });
 
       return toInsert.copyWith(id: id);
+    });
+  }
+
+  /// Distribute a lump-sum payment across multiple transactions.
+  /// Applies oldest-first (or caller-supplied order). Returns created payments.
+  Future<List<Payment>> insertMultiPayment({
+    required int customerId,
+    required String customerName,
+    required List<DebtTransaction> transactions,
+    required double totalAmount,
+    required PaymentMethod paymentMethod,
+    String? referenceNumber,
+    String? notes,
+    required DateTime paymentDate,
+  }) async {
+    final db = await database;
+    return await db.transaction((txn) async {
+      final now = DateTime.now();
+      double remaining = totalAmount;
+      final created = <Payment>[];
+
+      for (final tx in transactions) {
+        if (remaining <= 0) break;
+        if (tx.remainingBalance <= 0) continue;
+
+        // Fetch live balance inside the txn
+        final txMaps = await txn.query(
+          tableTransactions,
+          columns: ['remaining_balance', 'amount_paid', 'due_date'],
+          where: 'id = ? AND is_deleted = 0',
+          whereArgs: [tx.id],
+        );
+        if (txMaps.isEmpty) continue;
+
+        final liveRemaining =
+            (txMaps.first['remaining_balance'] as num).toDouble();
+        if (liveRemaining <= 0) continue;
+
+        final apply = remaining >= liveRemaining ? liveRemaining : remaining;
+        remaining -= apply;
+
+        // Generate payment ID
+        await txn.rawUpdate(
+          'UPDATE $tableSequences SET current_value = current_value + 1 WHERE name = ?',
+          ['payment'],
+        );
+        final seqResult = await txn.query(
+          tableSequences,
+          where: 'name = ?',
+          whereArgs: ['payment'],
+        );
+        final seqVal = seqResult.first['current_value'] as int;
+        final payId = 'PAY-${seqVal.toString().padLeft(5, '0')}';
+
+        final newRemaining = liveRemaining - apply;
+        final newAmountPaid =
+            (txMaps.first['amount_paid'] as num).toDouble() + apply;
+        final dueDate = txMaps.first['due_date'] as String?;
+
+        String status;
+        if (newRemaining <= 0) {
+          status = 'paid';
+        } else if (dueDate != null &&
+            DateTime.parse(dueDate).isBefore(DateTime.now())) {
+          status = 'overdue';
+        } else {
+          status = 'partiallyPaid';
+        }
+
+        // Insert payment row
+        final payment = Payment(
+          paymentId: payId,
+          transactionId: tx.id!,
+          customerId: customerId,
+          customerName: customerName,
+          txTransactionId: tx.transactionId,
+          amount: apply,
+          paymentMethod: paymentMethod,
+          referenceNumber: referenceNumber,
+          notes: notes,
+          paymentDate: paymentDate,
+          createdAt: now,
+        );
+
+        final pid = await txn.insert(tablePayments, payment.toMap());
+
+        // Update transaction balance
+        await txn.update(
+          tableTransactions,
+          {
+            'amount_paid': newAmountPaid,
+            'remaining_balance': newRemaining,
+            'status': status,
+            'updated_at': now.toIso8601String(),
+          },
+          where: 'id = ?',
+          whereArgs: [tx.id],
+        );
+
+        // Audit log
+        await txn.insert(tableAuditLogs, {
+          'action': AuditAction.paymentCreated.name,
+          'entity_type': 'payment',
+          'entity_id': payId,
+          'description':
+              'Multi-pay ₱${apply.toStringAsFixed(2)} on ${tx.transactionId} for $customerName',
+          'old_value': null,
+          'new_value': null,
+          'created_at': now.toIso8601String(),
+        });
+
+        created.add(payment.copyWith(id: pid));
+      }
+
+      return created;
     });
   }
 

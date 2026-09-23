@@ -346,12 +346,10 @@ class _FilterChips extends StatelessWidget {
             onSelected: (_) => onChanged(filter),
             selectedColor: Colors.white.withValues(alpha: 0.3),
             checkmarkColor: Colors.white,
-            labelStyle: TextStyle(
-              color: selected
-                  ? Colors.white
-                  : Colors.white.withValues(alpha: 0.85),
+            labelStyle: const TextStyle(
+              color: Colors.black,
               fontSize: 12,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              fontWeight: FontWeight.w500,
             ),
             backgroundColor: Colors.white.withValues(alpha: 0.08),
             side: BorderSide(

@@ -42,12 +42,11 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
   final List<_ItemEntry> _items = [];
   bool _isSaving = false;
 
-  double get _total => _items.fold(0.0, (s, i) => s + i.totalPrice);
+  double get _total => _items.fold(0.0, (s, i) => s + i.price);
 
   @override
   void initState() {
     super.initState();
-    // If customer is pre-selected, load them
     if (widget.customerId != null) {
       _loadPreSelectedCustomer();
     } else {
@@ -56,16 +55,12 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
   }
 
   Future<void> _loadPreSelectedCustomer() async {
-    // Lightweight: just fetch this one customer directly from DB
     final customer = await _db.getCustomerById(widget.customerId!);
-    if (mounted && customer != null) {
+    if (mounted) {
       setState(() {
         _selectedCustomer = customer;
-        _customerSearchCtrl.text = customer.name;
         _items.add(_ItemEntry());
       });
-    } else if (mounted) {
-      _items.add(_ItemEntry());
     }
   }
 
@@ -79,7 +74,6 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
       return;
     }
     setState(() => _isSearching = true);
-    // Query directly — no shared provider mutation, no UI rebuilds outside this screen
     final results = await _db.getCustomers(query: query.trim());
     if (!mounted) return;
     setState(() {
@@ -104,12 +98,11 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
     final initial = isDue
         ? (_dueDate ?? now.add(const Duration(days: 30)))
         : _transactionDate;
-    final first = isDue ? now : DateTime(2020);
 
     final picked = await showDatePicker(
       context: context,
       initialDate: initial,
-      firstDate: first,
+      firstDate: isDue ? now : DateTime(2020),
       lastDate: DateTime(2100),
       builder: (context, child) => Theme(
         data: Theme.of(context).copyWith(
@@ -118,7 +111,6 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
         child: child!,
       ),
     );
-
     if (picked != null && mounted) {
       setState(() {
         if (isDue) {
@@ -131,7 +123,6 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
   }
 
   Future<void> _save() async {
-    // Validate customer first before running form validation
     if (_selectedCustomer == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -142,24 +133,23 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
       return;
     }
 
-    if (_items.isEmpty || _items.every((i) => !i.isValid)) {
+    final validItems = _items.where((i) => i.isValid).toList();
+    if (validItems.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Add at least one item with name, qty, and price'),
+          content: Text('Add at least one item with a name and price'),
           backgroundColor: AppTheme.overdue,
         ),
       );
       return;
     }
 
-    // Only run form validation after pre-checks pass
     if (!_formKey.currentState!.validate()) return;
 
     final txProvider = context.read<TransactionProvider>();
-    final validItems = _items.where((i) => i.isValid).toList();
-
-    // Check credit limit
     final customer = _selectedCustomer!;
+
+    // Credit limit check
     if (customer.creditLimit != null) {
       final newBalance = customer.outstandingBalance + _total;
       if (newBalance > customer.creditLimit!) {
@@ -167,8 +157,7 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
         final confirm = await ConfirmDialog.show(
           context,
           title: 'Credit Limit Exceeded',
-          message:
-              '${customer.name}\'s limit: ${AppFormatter.currency(customer.creditLimit!)}\n'
+          message: 'Limit: ${AppFormatter.currency(customer.creditLimit!)}\n'
               'New balance: ${AppFormatter.currency(newBalance)}\n'
               'Over by: ${AppFormatter.currency(newBalance - customer.creditLimit!)}\n\n'
               'Continue anyway?',
@@ -197,14 +186,14 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
       updatedAt: now,
     );
 
+    // quantity=1, unit='pcs' as defaults since we removed those fields
     final items = validItems
         .map((i) => TransactionItem(
               itemName: i.nameCtrl.text.trim(),
-              quantity: double.parse(i.qtyCtrl.text),
-              unit: i.unit,
-              pricePerUnit:
-                  double.parse(i.priceCtrl.text.replaceAll(',', '')),
-              totalPrice: i.totalPrice,
+              quantity: 1,
+              unit: 'pcs',
+              pricePerUnit: i.price,
+              totalPrice: i.price,
             ))
         .toList();
 
@@ -244,8 +233,7 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final sym =
-        context.select<StoreProvider, String>((p) => p.currencySymbol);
+    final sym = context.select<StoreProvider, String>((p) => p.currencySymbol);
 
     return Scaffold(
       appBar: AppBar(
@@ -274,13 +262,12 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // Customer picker
-            _SectionLabel('Customer'),
+            // ── Customer ──────────────────────────────────────────────
+            const _Label('Customer'),
             const SizedBox(height: 8),
             if (widget.customerId != null)
-              // Pre-selected mode — show banner or loading
               _selectedCustomer != null
-                  ? _SelectedCustomerBanner(customer: _selectedCustomer!)
+                  ? _CustomerBanner(customer: _selectedCustomer!)
                   : Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
@@ -292,16 +279,16 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
                       child: const Row(
                         children: [
                           SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2)),
-                          SizedBox(width: 12),
+                              width: 16,
+                              height: 16,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2)),
+                          SizedBox(width: 10),
                           Text('Loading customer...'),
                         ],
                       ),
                     )
             else ...[
-              // Free search mode
               TextFormField(
                 controller: _customerSearchCtrl,
                 onChanged: _searchCustomers,
@@ -312,8 +299,8 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
                       ? const Padding(
                           padding: EdgeInsets.all(12),
                           child: SizedBox(
-                              width: 18,
-                              height: 18,
+                              width: 16,
+                              height: 16,
                               child:
                                   CircularProgressIndicator(strokeWidth: 2)),
                         )
@@ -325,7 +312,7 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
               ),
               if (_selectedCustomer != null) ...[
                 const SizedBox(height: 6),
-                _SelectedCustomerBanner(customer: _selectedCustomer!),
+                _CustomerBanner(customer: _selectedCustomer!),
               ],
               if (_showDropdown)
                 Card(
@@ -357,7 +344,6 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
                                           color: AppTheme.overdue,
                                           fontSize: 11,
                                           fontWeight: FontWeight.w600),
-                                      overflow: TextOverflow.ellipsis,
                                     )
                                   : null,
                               onTap: () => _selectCustomer(c),
@@ -366,18 +352,19 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
                   ),
                 ),
             ],
+
             const SizedBox(height: 20),
 
-            // Dates
+            // ── Dates ─────────────────────────────────────────────────
             Row(
               children: [
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const _SectionLabel('Transaction Date'),
-                      const SizedBox(height: 8),
-                      _DatePickerField(
+                      const _Label('Date'),
+                      const SizedBox(height: 6),
+                      _DateField(
                         date: _transactionDate,
                         onTap: () => _pickDate(false),
                         icon: Icons.calendar_today_outlined,
@@ -385,27 +372,18 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          const _SectionLabel('Due Date'),
-                          const SizedBox(width: 4),
-                          Text('(optional)',
-                              style: TextStyle(
-                                  fontSize: 10,
-                                  color: AppTheme.textHint)),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      _DatePickerField(
+                      const _Label('Due Date (optional)'),
+                      const SizedBox(height: 6),
+                      _DateField(
                         date: _dueDate,
                         onTap: () => _pickDate(true),
                         icon: Icons.event_outlined,
-                        placeholder: 'No due date',
+                        placeholder: 'None',
                         onClear: _dueDate != null
                             ? () => setState(() => _dueDate = null)
                             : null,
@@ -415,13 +393,14 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
                 ),
               ],
             ),
+
             const SizedBox(height: 24),
 
-            // Items
+            // ── Items ─────────────────────────────────────────────────
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const _SectionLabel('Items Purchased'),
+                const _Label('Items'),
                 TextButton.icon(
                   onPressed: () => setState(() => _items.add(_ItemEntry())),
                   icon: const Icon(Icons.add, size: 16),
@@ -444,35 +423,30 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
                   onChanged: () => setState(() {}),
                 )),
 
-            // Total
+            // ── Total ─────────────────────────────────────────────────
             Container(
-              margin: const EdgeInsets.only(top: 8),
-              padding: const EdgeInsets.all(16),
+              margin: const EdgeInsets.only(top: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: BoxDecoration(
-                color: AppTheme.primary.withValues(alpha: 0.06),
+                color: AppTheme.primary.withValues(alpha: 0.07),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                    color: AppTheme.primary.withValues(alpha: 0.2)),
+                border:
+                    Border.all(color: AppTheme.primary.withValues(alpha: 0.2)),
               ),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Total Amount',
+                  const Text('Total',
                       style: TextStyle(
                           fontSize: 15, fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      AppFormatter.currency(_total, symbol: sym),
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: AppTheme.primary,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.right,
+                  const Spacer(),
+                  Text(
+                    AppFormatter.currency(_total, symbol: sym),
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.primary,
                     ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
@@ -480,42 +454,45 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
 
             const SizedBox(height: 20),
 
-            // Notes
-            const _SectionLabel('Notes (optional)'),
-            const SizedBox(height: 8),
+            // ── Notes ─────────────────────────────────────────────────
+            const _Label('Notes (optional)'),
+            const SizedBox(height: 6),
             TextFormField(
               controller: _notesCtrl,
-              maxLines: 3,
+              maxLines: 2,
               textCapitalization: TextCapitalization.sentences,
               decoration: const InputDecoration(
-                hintText: 'Additional notes...',
+                hintText: 'e.g. bought on credit for fiesta',
                 prefixIcon: Icon(Icons.notes_outlined),
                 alignLabelWithHint: true,
               ),
             ),
-            const SizedBox(height: 32),
+
+            const SizedBox(height: 28),
 
             SizedBox(
               width: double.infinity,
-              child: ElevatedButton.icon(
+              child: ElevatedButton(
                 onPressed: _isSaving ? null : _save,
-                icon: _isSaving
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.save_outlined),
-                label: Text(
-                  _total > 0
-                      ? 'Record  ${AppFormatter.currency(_total, symbol: sym)}'
-                      : 'Record Debt',
-                  overflow: TextOverflow.ellipsis,
-                ),
                 style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16)),
+                child: _isSaving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : Text(
+                        _total > 0
+                            ? 'Save  ${AppFormatter.currency(_total, symbol: sym)}'
+                            : 'Save Debt',
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w700),
+                        overflow: TextOverflow.ellipsis,
+                      ),
               ),
             ),
+
             const SizedBox(height: 32),
           ],
         ),
@@ -524,11 +501,11 @@ class _AddDebtScreenState extends State<AddDebtScreen> {
   }
 }
 
-// ─── Selected Customer Banner ─────────────────────────────────────────────────
+// ─── Customer Banner ──────────────────────────────────────────────────────────
 
-class _SelectedCustomerBanner extends StatelessWidget {
+class _CustomerBanner extends StatelessWidget {
   final Customer customer;
-  const _SelectedCustomerBanner({required this.customer});
+  const _CustomerBanner({required this.customer});
 
   @override
   Widget build(BuildContext context) {
@@ -544,54 +521,47 @@ class _SelectedCustomerBanner extends StatelessWidget {
           const Icon(Icons.person, color: AppTheme.primary, size: 20),
           const SizedBox(width: 10),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(customer.name,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600, fontSize: 15)),
-                if (customer.phone != null)
-                  Text(customer.phone!,
-                      style: const TextStyle(
-                          fontSize: 12, color: AppTheme.textSecondary)),
-              ],
+            child: Text(
+              customer.name,
+              style: const TextStyle(
+                  fontWeight: FontWeight.w600, fontSize: 15),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (customer.outstandingBalance > 0)
-            Flexible(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    AppFormatter.currency(customer.outstandingBalance),
-                    style: const TextStyle(
-                        color: AppTheme.overdue,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const Text('outstanding',
-                      style: TextStyle(
-                          fontSize: 10, color: AppTheme.textHint)),
-                ],
-              ),
+          if (customer.outstandingBalance > 0) ...[
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  AppFormatter.currency(customer.outstandingBalance),
+                  style: const TextStyle(
+                      color: AppTheme.overdue,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12),
+                ),
+                const Text('balance',
+                    style:
+                        TextStyle(fontSize: 10, color: AppTheme.textHint)),
+              ],
             ),
+          ],
         ],
       ),
     );
   }
 }
 
-// ─── Date Picker Field ────────────────────────────────────────────────────────
+// ─── Date Field ───────────────────────────────────────────────────────────────
 
-class _DatePickerField extends StatelessWidget {
+class _DateField extends StatelessWidget {
   final DateTime? date;
   final VoidCallback onTap;
   final IconData icon;
   final String? placeholder;
   final VoidCallback? onClear;
 
-  const _DatePickerField({
+  const _DateField({
     required this.date,
     required this.onTap,
     required this.icon,
@@ -604,8 +574,7 @@ class _DatePickerField extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 13),
         decoration: BoxDecoration(
           color: Theme.of(context).brightness == Brightness.dark
               ? AppTheme.darkCard
@@ -615,26 +584,25 @@ class _DatePickerField extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Icon(icon, size: 18, color: AppTheme.textSecondary),
-            const SizedBox(width: 8),
+            Icon(icon, size: 16, color: AppTheme.textSecondary),
+            const SizedBox(width: 6),
             Expanded(
               child: Text(
                 date != null
                     ? AppFormatter.shortDate(date!)
-                    : (placeholder ?? 'Select date'),
+                    : (placeholder ?? 'Select'),
                 style: TextStyle(
-                  fontSize: 13,
-                  color: date != null
-                      ? null
-                      : AppTheme.textHint,
+                  fontSize: 12,
+                  color: date != null ? null : AppTheme.textHint,
                 ),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
             if (onClear != null)
               GestureDetector(
                 onTap: onClear,
                 child: const Icon(Icons.close,
-                    size: 16, color: AppTheme.textSecondary),
+                    size: 14, color: AppTheme.textSecondary),
               ),
           ],
         ),
@@ -645,9 +613,9 @@ class _DatePickerField extends StatelessWidget {
 
 // ─── Section Label ────────────────────────────────────────────────────────────
 
-class _SectionLabel extends StatelessWidget {
+class _Label extends StatelessWidget {
   final String text;
-  const _SectionLabel(this.text);
+  const _Label(this.text);
 
   @override
   Widget build(BuildContext context) {
@@ -663,36 +631,27 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-// ─── Item Entry Model ─────────────────────────────────────────────────────────
+// ─── Item Entry ───────────────────────────────────────────────────────────────
 
 class _ItemEntry {
   final nameCtrl = TextEditingController();
-  final qtyCtrl = TextEditingController(text: '1');
   final priceCtrl = TextEditingController();
-  String unit = 'pcs';
 
-  double get totalPrice {
-    final qty = double.tryParse(qtyCtrl.text) ?? 0;
-    final price =
-        double.tryParse(priceCtrl.text.replaceAll(',', '')) ?? 0;
-    return qty * price;
-  }
+  double get price =>
+      double.tryParse(priceCtrl.text.replaceAll(',', '')) ?? 0;
 
   bool get isValid =>
-      nameCtrl.text.trim().isNotEmpty &&
-      (double.tryParse(qtyCtrl.text) ?? 0) > 0 &&
-      (double.tryParse(priceCtrl.text.replaceAll(',', '')) ?? 0) > 0;
+      nameCtrl.text.trim().isNotEmpty && price > 0;
 
   void dispose() {
     nameCtrl.dispose();
-    qtyCtrl.dispose();
     priceCtrl.dispose();
   }
 }
 
-// ─── Item Row Widget ──────────────────────────────────────────────────────────
+// ─── Item Row ─────────────────────────────────────────────────────────────────
 
-class _ItemRow extends StatefulWidget {
+class _ItemRow extends StatelessWidget {
   final _ItemEntry entry;
   final int index;
   final String symbol;
@@ -711,159 +670,79 @@ class _ItemRow extends StatefulWidget {
   });
 
   @override
-  State<_ItemRow> createState() => _ItemRowState();
-}
-
-class _ItemRowState extends State<_ItemRow> {
-  static const _units = ['pcs', 'kg', 'g', 'L', 'mL', 'pack', 'box', 'dozen', 'tray', 'can', 'bottle'];
-
-  @override
   Widget build(BuildContext context) {
-    final entry = widget.entry;
-    final total = entry.totalPrice;
-
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 10),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Item # header
+            // Header row
             Row(
               children: [
-                Text('Item ${widget.index + 1}',
+                Text('Item ${index + 1}',
                     style: const TextStyle(
-                        fontSize: 12,
+                        fontSize: 11,
                         fontWeight: FontWeight.w600,
                         color: AppTheme.textSecondary)),
                 const Spacer(),
-                if (widget.canDelete)
-                  IconButton(
-                    onPressed: widget.onDelete,
-                    icon: const Icon(Icons.remove_circle_outline,
-                        color: AppTheme.overdue, size: 20),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
+                if (canDelete)
+                  GestureDetector(
+                    onTap: onDelete,
+                    child: const Icon(Icons.remove_circle_outline,
+                        color: AppTheme.overdue, size: 18),
                   ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
 
-            // Item name
-            TextFormField(
-              controller: entry.nameCtrl,
-              textCapitalization: TextCapitalization.sentences,
-              onChanged: (_) => widget.onChanged(),
-              decoration: const InputDecoration(
-                hintText: 'Item name',
-                prefixIcon: Icon(Icons.inventory_2_outlined, size: 18),
-                isDense: true,
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              ),
-              validator: (v) =>
-                  v == null || v.trim().isEmpty ? 'Required' : null,
-            ),
-            const SizedBox(height: 8),
-
-            // Qty + Unit + Price
+            // Name + Price side by side
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Qty
-                SizedBox(
-                  width: 60,
+                // Item name
+                Expanded(
+                  flex: 3,
                   child: TextFormField(
-                    controller: entry.qtyCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(
-                          RegExp(r'[\d\.]'))
-                    ],
-                    onChanged: (_) => widget.onChanged(),
-                    textAlign: TextAlign.center,
+                    controller: entry.nameCtrl,
+                    textCapitalization: TextCapitalization.sentences,
+                    onChanged: (_) => onChanged(),
                     decoration: const InputDecoration(
-                      hintText: 'Qty',
+                      hintText: 'Item name',
                       isDense: true,
                       contentPadding: EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 12),
+                          horizontal: 10, vertical: 11),
                     ),
-                    validator: AppValidators.quantity,
+                    validator: (v) =>
+                        v == null || v.trim().isEmpty ? 'Required' : null,
                   ),
                 ),
-                const SizedBox(width: 4),
-
-                // Unit
-                SizedBox(
-                  width: 72,
-                  child: DropdownButtonFormField<String>(
-                    initialValue: entry.unit,
-                    isDense: true,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding: EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 12),
-                    ),
-                    items: _units
-                        .map((u) => DropdownMenuItem(
-                            value: u,
-                            child: Text(u,
-                                style: const TextStyle(fontSize: 12),
-                                overflow: TextOverflow.ellipsis)))
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null) {
-                        setState(() => entry.unit = v);
-                        widget.onChanged();
-                      }
-                    },
-                  ),
-                ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 8),
 
                 // Price
                 Expanded(
+                  flex: 2,
                   child: TextFormField(
                     controller: entry.priceCtrl,
                     keyboardType: const TextInputType.numberWithOptions(
                         decimal: true),
                     inputFormatters: [
-                      FilteringTextInputFormatter.allow(
-                          RegExp(r'[\d\.,]'))
+                      FilteringTextInputFormatter.allow(RegExp(r'[\d\.,]'))
                     ],
-                    onChanged: (_) => widget.onChanged(),
+                    onChanged: (_) => onChanged(),
                     decoration: InputDecoration(
                       hintText: 'Price',
-                      prefixText: '${widget.symbol} ',
+                      prefixText: '$symbol ',
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 12),
+                          horizontal: 10, vertical: 11),
                     ),
-                    validator: (v) => AppValidators.amount(v),
+                    validator: AppValidators.amount,
                   ),
                 ),
               ],
             ),
-
-            // Line total
-            if (total > 0) ...[
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Text(
-                  '= ${AppFormatter.currency(total, symbol: widget.symbol)}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.primary,
-                    fontSize: 13,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-              ),
-            ],
           ],
         ),
       ),
